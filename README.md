@@ -85,4 +85,4 @@ scheduled task, and turns Process Creation auditing back off.
 
 ## License
 
-MIT (or replace with your preferred license)
+MIT
