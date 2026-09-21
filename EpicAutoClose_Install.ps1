@@ -1,4 +1,4 @@
-﻿# SCRIPT RUN AS ADMIN
+# SCRIPT RUN AS ADMIN
 If (!([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]"Administrator"))
 {
 try {
@@ -45,6 +45,46 @@ function Resolve-EpicLauncherPath {
     return $null
 }
 
+function Ensure-Prerequisites {
+    $services = @("EventLog", "RpcSs", "RpcEptMapper", "DcomLaunch", "Winmgmt", "Schedule")
+    $needsRestart = $false
+    $report = @()
+
+    foreach ($svc in $services) {
+        $before = Get-Service -Name $svc -ErrorAction SilentlyContinue
+        if (-not $before) {
+            $report += "$svc - NOT FOUND"
+            $needsRestart = $true
+            continue
+        }
+
+        if ($before.StartType -ne "Automatic") {
+            sc.exe config $svc start= auto | Out-Null
+        }
+
+        if ($before.Status -ne "Running") {
+            try {
+                Start-Service -Name $svc -ErrorAction Stop
+            } catch {
+                sc.exe start $svc | Out-Null
+            }
+            Start-Sleep -Milliseconds 800
+        }
+
+        $after = Get-Service -Name $svc -ErrorAction SilentlyContinue
+        if ($after.Status -ne "Running") {
+            $needsRestart = $true
+            $report += "$svc - still $($after.Status) after fix attempt"
+        } else {
+            $report += "$svc - OK (Running/Automatic)"
+        }
+    }
+
+    "$(Get-Date) - Prerequisite check:`n$($report -join "`n")" | Out-File $logPath -Append -Encoding UTF8
+
+    return $needsRestart
+}
+
 Write-Host "1. Install and start Epic Auto-Close (runs when Epic Games Launcher opens)"
 Write-Host "2. Stop and remove the tool completely"
 Write-Host "3. Check detected games`n"
@@ -56,6 +96,17 @@ switch ($choice) {
 1 {
 
 Clear-Host
+
+Write-Host "Checking required Windows services..."
+$needsRestart = Ensure-Prerequisites
+if ($needsRestart) {
+    Write-Host "`nOne or more required Windows services (EventLog, Task Scheduler, WMI, RPC) could not be started." -ForegroundColor Red
+    Write-Host "This usually needs a full Windows restart to take effect (details logged to $logPath)." -ForegroundColor Yellow
+    Write-Host "Please restart your PC, then run this script again and choose 1." -ForegroundColor Yellow
+    Read-Host "`nPress Enter to close"
+    exit
+}
+Write-Host "All required services are OK.`n" -ForegroundColor Green
 
 $launcherPath = Resolve-EpicLauncherPath
 if (-not $launcherPath) {
